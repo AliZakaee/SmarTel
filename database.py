@@ -47,6 +47,9 @@ SETTINGS_SCHEMA: dict[str, tuple[type, object]] = {
     # Internal extra (not in the original spec list): allow processing of
     # non-text business messages. Off by default per spec ("text by default").
     "process_nontext_enabled": (bool, False),
+    # Free-text instruction always added to the AI system prompt (language, tone,
+    # persona). Empty by default. Set via /instructions.
+    "custom_instructions": (str, ""),
 }
 
 _BOOL_TRUE = {"1", "true", "yes", "on"}

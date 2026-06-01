@@ -249,23 +249,27 @@ def _setup_codex_backend() -> None:
     """Guide the owner through Codex CLI install/login for the ChatGPT-subscription
     backend. Best-effort: never aborts the wizard if Codex isn't ready yet."""
     from services import codex_service
+
+    # Install the Codex CLI if it isn't already present.
     if not codex_service.is_available():
-        print("\n   ! Codex CLI not found on PATH.")
-        print("     Install it with:  npm install -g @openai/codex")
-        print("                  or:  brew install --cask codex")
-        print("     You can install it later; the bot will warn until Codex is ready.")
-        if not _prompt_bool("   Continue configuring the Codex backend anyway?", default=True):
-            return
-    elif codex_service.is_logged_in():
-        print("   ✓ Codex CLI found and appears logged in.")
+        print("\n   Codex CLI not found on PATH.")
+        if _prompt_bool("   Install it now (npm i -g @openai/codex, or Homebrew)?", default=True):
+            codex_service.install()
+        if not codex_service.is_available():
+            print("   ! Codex still isn't available. Install it manually, then run "
+                  "`codex login`.")
+            print("     The bot will warn at startup until Codex is ready.")
+            return  # continue the wizard; backend stays configured as codex
+
+    # Codex is available — handle login.
+    if codex_service.is_logged_in():
+        print("   ✓ Codex CLI ready and appears logged in.")
         if not _prompt_bool("   Re-run `codex login` anyway?", default=False):
             return
     else:
-        print("   ✓ Codex CLI found (not logged in yet).")
+        print("   ✓ Codex CLI ready (not logged in yet).")
 
-    if codex_service.is_available() and _prompt_bool(
-        "   Run `codex login` now (choose 'Sign in with ChatGPT')?", default=True
-    ):
+    if _prompt_bool("   Run `codex login` now (choose 'Sign in with ChatGPT')?", default=True):
         device = _prompt_bool("   Use device-code login (for headless/remote machines)?", default=False)
         ok = codex_service.login(device_auth=device)
         print("   ✓ Codex login completed." if ok else

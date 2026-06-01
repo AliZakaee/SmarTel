@@ -47,6 +47,7 @@ def register(bot, cfg) -> None:
     cmd(["resume_chat"])(cmd_resume_chat)
     cmd(["reset"])(cmd_reset)
     cmd(["cancel"])(cmd_cancel)
+    cmd(["instructions"])(cmd_instructions)
 
     @bot.callback_query_handler(func=lambda c: c.data and c.data.startswith("panel:"))
     @security.owner_only_callback
@@ -112,6 +113,7 @@ HELP_TEXT = (
     "/auto_on /auto_off — toggle automatic replies\n"
     "/approval_on /approval_off — toggle approval-before-send\n"
     "/kb /kb_add /kb_upload /kb_search /kb_list /kb_delete /kb_clear — knowledge base\n"
+    "/instructions — set a standing instruction (e.g. always reply in Persian)\n"
     "/memory_clear — clear conversation memory\n"
     "/pause_chat &lt;chat_id&gt; · /resume_chat &lt;chat_id&gt; — pause/resume a customer\n"
     "/reset — clear pending approvals/pauses (confirmation)\n"
@@ -232,6 +234,33 @@ def cmd_reset(message) -> None:
 def cmd_cancel(message) -> None:
     database.clear_owner_pending_input(security.owner_id())
     handlers.bot.send_message(message.chat.id, "Cancelled. ✖")
+
+
+def cmd_instructions(message) -> None:
+    """Show / set / clear the standing instruction added to every AI reply.
+
+    This is the right place for behavior like language, tone or persona — unlike
+    the knowledge base, it always applies (it is not retrieval-dependent)."""
+    arg = _args(message)
+    if not arg:
+        current = database.get_str("custom_instructions")
+        shown = utils.escape(current) if current else "<i>(none)</i>"
+        return handlers.bot.send_message(
+            message.chat.id,
+            "📝 <b>Custom instructions</b> — always added to the AI's system prompt "
+            "(applies to every reply, both backends):\n\n"
+            f"{shown}\n\n"
+            "Set:   <code>/instructions &lt;text&gt;</code>\n"
+            "Example: <code>/instructions Always reply in Persian (فارسی).</code>\n"
+            "Clear: <code>/instructions clear</code>",
+            parse_mode="HTML")
+    if arg.strip().lower() == "clear":
+        database.set_setting("custom_instructions", "")
+        return handlers.bot.send_message(message.chat.id, "Custom instructions cleared. ✖")
+    database.set_setting("custom_instructions", arg)
+    handlers.bot.send_message(
+        message.chat.id,
+        "✅ Custom instructions updated. They'll be applied to every reply from now on.")
 
 
 # =============================================================================

@@ -16,6 +16,7 @@ from __future__ import annotations
 import logging
 import os
 import shlex
+import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -26,10 +27,12 @@ log = logging.getLogger("smartel.codex")
 
 DEFAULT_TIMEOUT = 180  # seconds per reply
 
-# Default flags: read-only sandbox, no approval prompts, allow running outside a
-# git repo. Override entirely via CODEX_EXEC_ARGS for other Codex versions.
-_DEFAULT_EXEC_FLAGS = ["--skip-git-repo-check", "--sandbox", "read-only",
-                       "--ask-for-approval", "never"]
+# Flags for `codex exec`. exec is already non-interactive (it never prompts for
+# approval), so we only need: allow running outside a git repo + a read-only
+# sandbox. If a Codex version rejects these, we retry with the minimal set, then
+# surface guidance to set CODEX_EXEC_ARGS. Override entirely via CODEX_EXEC_ARGS.
+_DEFAULT_EXEC_FLAGS = ["--skip-git-repo-check", "--sandbox", "read-only"]
+_MINIMAL_EXEC_FLAGS = ["--skip-git-repo-check"]
 
 CODEX_INSTRUCTION = (
     "You are a customer-service assistant replying on behalf of a business on "
@@ -45,9 +48,41 @@ def binary() -> str:
 
 
 def is_available() -> bool:
-    import shutil
     b = binary()
     return shutil.which(b) is not None or Path(b).exists()
+
+
+def install() -> bool:
+    """Install the Codex CLI via npm (preferred) or Homebrew. Returns True if
+    `codex` is available afterward. Best-effort; prints progress and guidance."""
+    if is_available():
+        return True
+    candidates: list[list[str]] = []
+    if shutil.which("npm"):
+        candidates.append(["npm", "install", "-g", "@openai/codex"])
+    if shutil.which("brew"):
+        candidates.append(["brew", "install", "--cask", "codex"])
+    if not candidates:
+        print("   ! Couldn't auto-install: neither `npm` nor `brew` is on PATH.")
+        print("     Install Node.js or Homebrew, then run one of:")
+        print("       npm install -g @openai/codex")
+        print("       brew install --cask codex")
+        return False
+    for cmd in candidates:
+        print(f"   → Installing Codex CLI: {' '.join(cmd)}")
+        try:
+            rc = subprocess.run(cmd).returncode
+        except Exception as e:  # pragma: no cover
+            log.warning("codex install via %s failed: %s", cmd[0], type(e).__name__)
+            continue
+        if rc == 0 and is_available():
+            print("   ✓ Codex CLI installed.")
+            return True
+        print(f"   ! `{cmd[0]}` finished (exit {rc}) but `codex` isn't on PATH yet.")
+    if not is_available():
+        print("   ! `codex` still isn't on PATH — you may need to restart your shell")
+        print("     (or add the npm global / Homebrew bin to PATH), then re-run the wizard.")
+    return is_available()
 
 
 def is_logged_in() -> bool:
@@ -92,9 +127,14 @@ def _build_prompt(messages: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def _exec_flags() -> list[str]:
+def _flag_sets() -> list[list[str]]:
+    """Flag sets to try in order. A user-provided CODEX_EXEC_ARGS overrides
+    everything (no fallback); otherwise try the default set, then a minimal set
+    if the default is rejected as an unexpected argument."""
     override = (os.environ.get("CODEX_EXEC_ARGS") or "").strip()
-    return shlex.split(override) if override else list(_DEFAULT_EXEC_FLAGS)
+    if override:
+        return [shlex.split(override)]
+    return [list(_DEFAULT_EXEC_FLAGS), list(_MINIMAL_EXEC_FLAGS)]
 
 
 def chat(messages: list[dict], *, model: str | None = None) -> str:
@@ -109,15 +149,43 @@ def chat(messages: list[dict], *, model: str | None = None) -> str:
     model = (model or os.environ.get("CODEX_MODEL") or "").strip() or None
     timeout = _timeout()
 
+    flag_sets = _flag_sets()
+    rc, reply, stderr = 1, "", ""
+    for idx, flags in enumerate(flag_sets):
+        rc, reply, stderr = _run_exec(prompt, model, flags, timeout)
+        if reply:
+            return reply
+        # Self-heal across Codex versions: if a flag was rejected, retry simpler.
+        if rc != 0 and _is_arg_error(stderr) and idx + 1 < len(flag_sets):
+            log.warning("codex exec rejected flags (%s); retrying with a simpler set.",
+                        " ".join(flags))
+            continue
+        break
+
+    if rc != 0:
+        log.error("codex exec failed (exit %s): %s", rc, (stderr or "").strip()[:500])
+        if _is_arg_error(stderr):
+            raise OpenAIServiceError(
+                "Codex rejected the exec flags for your CLI version. Set CODEX_EXEC_ARGS "
+                "in .env to flags your `codex exec` accepts (or leave it blank).",
+                kind="bad_request")
+        if _looks_like_auth_error(stderr):
+            raise OpenAIServiceError(
+                "Codex isn't logged in — run `codex login` (Sign in with ChatGPT).",
+                kind="auth")
+        raise OpenAIServiceError("Codex failed to generate a reply. See logs.", kind="unknown")
+    raise OpenAIServiceError("Codex returned an empty reply.", kind="unknown")
+
+
+def _run_exec(prompt: str, model: str | None, flags: list[str], timeout: int):
+    """Run one `codex exec` attempt. Returns (returncode, reply_text, stderr)."""
     with tempfile.TemporaryDirectory(prefix="smartel_codex_") as workdir:
         out_path = Path(workdir) / "reply.txt"
-        cmd = [binary(), "exec", "-C", workdir,
-               "--output-last-message", str(out_path)]
-        cmd += _exec_flags()
+        cmd = [binary(), "exec", "-C", workdir, "--output-last-message", str(out_path)]
+        cmd += flags
         if model:
             cmd += ["-m", model]
         cmd += ["-"]  # read the prompt from stdin (avoids arg-length/escaping issues)
-
         try:
             proc = subprocess.run(cmd, input=prompt, capture_output=True, text=True,
                                   timeout=timeout, cwd=workdir)
@@ -126,26 +194,19 @@ def chat(messages: list[dict], *, model: str | None = None) -> str:
         except subprocess.TimeoutExpired as e:
             raise OpenAIServiceError("Codex timed out generating a reply.",
                                      kind="timeout", cause=e) from e
-
         reply = ""
         try:
             reply = out_path.read_text(encoding="utf-8").strip()
         except OSError:
             pass
-        if not reply:
+        if not reply and proc.returncode == 0:
             reply = (proc.stdout or "").strip()
+        return proc.returncode, reply, (proc.stderr or "")
 
-        if proc.returncode != 0 and not reply:
-            err = (proc.stderr or proc.stdout or "").strip()
-            log.error("codex exec failed (exit %s): %s", proc.returncode, err[:500])
-            kind = "auth" if _looks_like_auth_error(err) else "unknown"
-            owner_msg = ("Codex isn't logged in — run `codex login` (Sign in with ChatGPT)."
-                         if kind == "auth" else
-                         "Codex failed to generate a reply. See logs.")
-            raise OpenAIServiceError(owner_msg, kind=kind)
-        if not reply:
-            raise OpenAIServiceError("Codex returned an empty reply.", kind="unknown")
-        return reply
+
+def _is_arg_error(text: str) -> bool:
+    t = (text or "").lower()
+    return "unexpected argument" in t or ("error:" in t and "usage:" in t)
 
 
 def _timeout() -> int:

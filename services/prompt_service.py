@@ -54,6 +54,9 @@ def build_messages(business_connection_id: str, customer_chat_id: int,
             return [], short
 
     system = BASE_SYSTEM_PROMPT
+    custom = database.get_str("custom_instructions").strip()
+    if custom:
+        system += "\n\nOwner's standing instructions (ALWAYS follow these): " + custom
     if database.get_bool("strict_kb_mode"):
         system += STRICT_REINFORCEMENT
     context_block = kb_service.build_context_block(chunks)

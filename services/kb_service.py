@@ -23,6 +23,11 @@ CHUNK_OVERLAP = 150    # characters
 KB_TOP_K = embedding_service.KB_TOP_K
 MIN_VECTOR_SCORE = 0.15
 CONTEXT_CHAR_BUDGET = 6000
+# When the whole KB fits in this many chunks, include ALL of it in the prompt
+# instead of relying on retrieval. Short identity/persona facts (e.g. "I am from
+# Iran") then always reach the model — important on backends without embeddings
+# (Codex), where retrieval is keyword-only and misses short/stop-word questions.
+SMALL_KB_ALWAYS_INCLUDE = 12
 STRICT_NO_INFO = "I don't have enough information about that in the knowledge base."
 
 
@@ -167,7 +172,12 @@ def search_for_prompt(query: str) -> tuple[list, str | None]:
     """
     if not database.get_bool("kb_enabled"):
         return [], None
-    chunks = search(query)
+    all_chunks = database.get_all_chunks()
+    if all_chunks and len(all_chunks) <= SMALL_KB_ALWAYS_INCLUDE:
+        # Small KB → always include the whole thing (no retrieval miss).
+        chunks = list(all_chunks)
+    else:
+        chunks = search(query)
     if database.get_bool("strict_kb_mode") and not chunks:
         return [], STRICT_NO_INFO
     return chunks, None

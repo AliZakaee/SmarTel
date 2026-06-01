@@ -116,6 +116,7 @@ def set_bot_commands(bot: telebot.TeleBot) -> None:
         ("approval_on", "Require approval before sending"),
         ("approval_off", "Allow automatic sending"),
         ("kb", "Knowledge base menu"),
+        ("instructions", "Set a standing instruction (e.g. language)"),
         ("memory_clear", "Clear conversation memory"),
         ("pause_chat", "Pause a customer chat"),
         ("resume_chat", "Resume a customer chat"),

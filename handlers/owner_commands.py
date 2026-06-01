@@ -137,8 +137,9 @@ def _status_text() -> str:
     lines.append(f"Auto-reply: <b>{'ON' if st['auto_reply_enabled'] else 'OFF'}</b>")
     lines.append(f"Approval mode: <b>{'ON' if st['approval_mode_enabled'] else 'OFF'}</b>")
     lines.append(f"Monitoring: <b>{'ON' if st['monitoring_mode'] else 'OFF'}</b>")
-    lines.append(f"OpenAI: <b>{'connected' if openai_service.has_api_key() else 'not connected'}</b> "
-                 f"({utils.escape(openai_service.masked_active_key())})")
+    lines.append(f"AI backend: <b>{'ready' if openai_service.is_ready() else 'not configured'}</b> "
+                 f"· {utils.escape(openai_service.backend_label())}")
+    lines.append(f"API key: {utils.escape(openai_service.masked_active_key())}")
     lines.append(f"Model: <code>{utils.escape(st['model'])}</code>")
     lines.append("")
     conns = st["connections"]

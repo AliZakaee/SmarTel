@@ -61,6 +61,7 @@ class Config:
     bot_token: str
     owner_user_id: int
     openai_api_key: str
+    openai_base_url: str
     fernet_key: str
     default_model: str
     default_auto_reply: bool
@@ -77,6 +78,7 @@ class Config:
             bot_token=(os.environ.get("BOT_TOKEN") or "").strip(),
             owner_user_id=_to_int(os.environ.get("OWNER_USER_ID")),
             openai_api_key=(os.environ.get("OPENAI_API_KEY") or "").strip(),
+            openai_base_url=(os.environ.get("OPENAI_BASE_URL") or "").strip(),
             fernet_key=(os.environ.get("SMARTEL_FERNET_KEY") or "").strip(),
             default_model=(os.environ.get("DEFAULT_MODEL") or "gpt-4.1-mini").strip(),
             default_auto_reply=_parse_bool(os.environ.get("DEFAULT_AUTO_REPLY"), False),
@@ -110,6 +112,7 @@ class Config:
             f"  Bot token:        {mask_token(self.bot_token)}\n"
             f"  Owner user ID:    {mask_id(self.owner_user_id)}\n"
             f"  OpenAI key:       {mask_key(self.openai_api_key) if self.openai_api_key else '<not set>'}\n"
+            f"  OpenAI base URL:  {self.openai_base_url or '<default OpenAI>'}\n"
             f"  Fernet key:       {'set' if self.fernet_key else '<not set>'}\n"
             f"  Default model:    {self.default_model}\n"
             f"  Auto-reply:       {self.default_auto_reply}\n"
@@ -143,6 +146,7 @@ def _env_values_from_config(cfg: Config) -> dict[str, str]:
         "BOT_TOKEN": cfg.bot_token,
         "OWNER_USER_ID": str(cfg.owner_user_id),
         "OPENAI_API_KEY": cfg.openai_api_key,
+        "OPENAI_BASE_URL": cfg.openai_base_url,
         "SMARTEL_FERNET_KEY": cfg.fernet_key,
         "DEFAULT_MODEL": cfg.default_model,
         "DEFAULT_AUTO_REPLY": "true" if cfg.default_auto_reply else "false",
@@ -254,6 +258,9 @@ def run_wizard() -> Config:
     owner_user_id = int(_prompt_text("2) Owner Telegram user ID (from @userinfobot)",
                                      validator=_validate_owner_id))
     openai_api_key = _prompt_text("3) OpenAI API key (sk-...)", secret=True, required=False)
+    openai_base_url = _prompt_text(
+        "3b) Custom OpenAI-compatible base URL (optional, advanced; blank = OpenAI)",
+        required=False)
     default_model = _prompt_text("4) Default OpenAI model", default="gpt-4.1-mini")
     default_auto_reply = _prompt_bool("5) Enable automatic replies by default?", default=False)
     default_approval_mode = _prompt_bool("6) Enable approval-before-send by default?", default=True)
@@ -265,6 +272,7 @@ def run_wizard() -> Config:
         bot_token=bot_token,
         owner_user_id=owner_user_id,
         openai_api_key=openai_api_key,
+        openai_base_url=openai_base_url,
         fernet_key=fernet_key,
         default_model=default_model,
         default_auto_reply=default_auto_reply,

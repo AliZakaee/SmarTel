@@ -119,8 +119,36 @@ def _resolve_api_key() -> str | None:
     return None
 
 
+def _resolve_base_url() -> str | None:
+    """Custom OpenAI-compatible endpoint (e.g. a local Codex-backed proxy, a
+    self-hosted model, or another provider). None => the default OpenAI API."""
+    return (os.environ.get("OPENAI_BASE_URL") or "").strip() or None
+
+
+def using_custom_endpoint() -> bool:
+    return _resolve_base_url() is not None
+
+
 def has_api_key() -> bool:
     return bool(_resolve_api_key())
+
+
+def is_ready() -> bool:
+    """Whether the AI backend can be used: a key is set, OR a custom endpoint is
+    configured (which may not require a key)."""
+    return bool(_resolve_api_key()) or using_custom_endpoint()
+
+
+def backend_label() -> str:
+    base = _resolve_base_url()
+    if not base:
+        return "OpenAI API"
+    try:
+        from urllib.parse import urlparse
+        host = urlparse(base).netloc or base
+    except Exception:
+        host = base
+    return f"custom endpoint ({host})"
 
 
 def masked_active_key() -> str:
@@ -168,16 +196,23 @@ def get_client():
             "The openai package is not installed. Run: pip install -r requirements.txt",
             kind="unknown", cause=_IMPORT_ERROR,
         )
+    base_url = _resolve_base_url()
     key = _resolve_api_key()
     if not key:
-        raise OpenAIServiceError(
-            "No OpenAI API key configured. Use /connect_openai to add one.",
-            kind="auth",
-        )
-    fp = _fingerprint(key)
+        if base_url:
+            # Proxies / local servers that ignore auth still need a non-empty
+            # string (the SDK rejects an empty api_key at construction).
+            key = "sk-no-key-required"
+        else:
+            raise OpenAIServiceError(
+                "No OpenAI API key configured. Use /connect_openai to add one, "
+                "or set OPENAI_BASE_URL to a custom endpoint.",
+                kind="auth",
+            )
+    fp = _fingerprint(f"{key}|{base_url or ''}")
     with _client_lock:
         if _client is None or _client_fingerprint != fp:
-            _client = OpenAI(api_key=key, timeout=60.0)
+            _client = OpenAI(api_key=key, base_url=base_url, timeout=60.0)
             _client_fingerprint = fp
         return _client
 
@@ -267,10 +302,11 @@ def validate_key(api_key: str) -> tuple[bool, str]:
     if OpenAI is None:
         return False, "openai package not installed."
     api_key = api_key.strip()
-    if not api_key.startswith("sk-"):
+    base_url = _resolve_base_url()
+    if not base_url and not api_key.startswith("sk-"):
         return False, "Key should start with 'sk-'."
     try:
-        client = OpenAI(api_key=api_key, timeout=20.0)
+        client = OpenAI(api_key=api_key or "sk-no-key-required", base_url=base_url, timeout=20.0)
         client.models.list()
         return True, "Key validated."
     except Exception as e:

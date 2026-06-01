@@ -202,7 +202,8 @@ def _notify_startup(bot: telebot.TeleBot, cfg: config.Config, me: dict) -> None:
             "✅ <b>SmarTel is online</b> as @" + utils.escape(me["username"]) + ".\n"
             f"Auto-reply: <b>{'ON' if database.get_bool('auto_reply_enabled') else 'OFF'}</b> · "
             f"Approval: <b>{'ON' if database.get_bool('approval_mode_enabled') else 'OFF'}</b>\n"
-            f"OpenAI: <b>{'connected' if openai_service.has_api_key() else 'not connected'}</b>\n\n"
+            f"AI backend: <b>{'ready' if openai_service.is_ready() else 'not configured'}</b> "
+            f"({utils.escape(openai_service.backend_label())})\n\n"
             "Connect me in <b>Telegram → Settings → Business → Chatbots</b>, then /start."
         )
         bot.send_message(cfg.owner_user_id, text, parse_mode="HTML")

@@ -216,3 +216,22 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ----------------------------------------------------------------------------
+# SmarTel runtime data & secrets
+# ----------------------------------------------------------------------------
+# .env is already ignored above; also ignore wizard backups.
+.env.bak.*
+
+# SQLite database (and WAL/SHM sidecars).
+*.db
+*.db-wal
+*.db-shm
+storage/smartel.db*
+
+# Uploaded knowledge-base files and any external vector store, but keep the
+# directories themselves (.gitkeep).
+storage/uploads/*
+!storage/uploads/.gitkeep
+storage/vector_store/*
+!storage/vector_store/.gitkeep

@@ -139,8 +139,15 @@ def _status_text() -> str:
     lines.append(f"Monitoring: <b>{'ON' if st['monitoring_mode'] else 'OFF'}</b>")
     lines.append(f"AI backend: <b>{'ready' if openai_service.is_ready() else 'not configured'}</b> "
                  f"· {utils.escape(openai_service.backend_label())}")
-    lines.append(f"API key: {utils.escape(openai_service.masked_active_key())}")
-    lines.append(f"Model: <code>{utils.escape(st['model'])}</code>")
+    if openai_service._resolve_backend() == "codex":
+        from services import codex_service
+        installed = codex_service.is_available()
+        logged_in = codex_service.is_logged_in() if installed else False
+        lines.append(f"Codex CLI: {'found' if installed else 'NOT found'} · "
+                     f"login: {'yes' if logged_in else 'unknown/no'}")
+    else:
+        lines.append(f"API key: {utils.escape(openai_service.masked_active_key())}")
+    lines.append(f"Model: <code>{utils.escape(openai_service.active_model_label())}</code>")
     lines.append("")
     conns = st["connections"]
     if not conns:

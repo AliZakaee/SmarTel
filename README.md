@@ -114,32 +114,54 @@ python main.py --reset
 
 ---
 
-### Custom model endpoint (local models / other providers / ChatGPT-subscription proxy)
+### Use your ChatGPT subscription via Codex (built-in)
 
-SmarTel talks to OpenAI through a single layer (`services/openai_service.py`), so
-you can point it at **any OpenAI-compatible endpoint** by setting
-`OPENAI_BASE_URL` in `.env` (or via the wizard's optional step 3b):
+Instead of an API key, SmarTel can generate replies through your **ChatGPT
+subscription** using the official **Codex CLI** ("Sign in with ChatGPT"). Pick
+this in the first-launch wizard:
+
+> **3) AI backend → 2) Sign in with ChatGPT**
+
+The wizard will check for the Codex CLI, run **`codex login`** for you (browser or
+`--device-auth` for headless machines), and set `MODEL_BACKEND=codex` in `.env`.
+After that, each reply is produced by invoking `codex exec` with tools/sandbox
+disabled, authenticated by your Codex login — no API key, no separate proxy.
+
+Prerequisites:
+
+```bash
+npm install -g @openai/codex      # or: brew install --cask codex
+codex login                       # the wizard can do this step for you
+```
+
+Relevant `.env` keys (the wizard writes these): `MODEL_BACKEND=codex`, optional
+`CODEX_MODEL` (e.g. `gpt-5.4`; blank = Codex default), and advanced overrides
+`CODEX_BIN`, `CODEX_EXEC_TIMEOUT`, `CODEX_EXEC_ARGS`. `/status` shows
+`ChatGPT via Codex` plus whether the CLI is found/logged in.
+
+**Caveats:** Codex is a *coding agent*, so replies are slower than an API call and
+phrasing can differ; **ChatGPT-plan rate limits apply** (a busy bot can hit caps);
+**embeddings are unavailable**, so the knowledge base falls back to keyword search.
+The mechanism (official Codex CLI + official ChatGPT login) is legitimate, but
+automating a personal subscription for a customer-facing service is a usage-policy
+gray area — review OpenAI's terms before relying on it.
+
+### Custom model endpoint (local models / other providers / proxies)
+
+SmarTel talks to the model through a single layer (`services/openai_service.py`),
+so you can point it at **any OpenAI-compatible endpoint** by setting
+`OPENAI_BASE_URL` in `.env` (wizard option 3):
 
 - **Local model (no cost):** Ollama → `OPENAI_BASE_URL=http://localhost:11434/v1`,
   LM Studio → `http://localhost:1234/v1`. Set `openai_model` in `/settings` to the
   local model name. If the server needs no key, leave `OPENAI_API_KEY` blank.
 - **Another provider:** any OpenAI-compatible base URL + that provider's key.
-- **Use a ChatGPT/Codex subscription (advanced):** run a local **OpenAI-compatible
-  proxy** that is backed by your ChatGPT login via the Codex CLI's "Sign in with
-  ChatGPT" (e.g. the proxy shipped by tools like Hermes Agent). Such a proxy
-  exposes a `localhost` endpoint; set `OPENAI_BASE_URL` to it and SmarTel will use
-  your subscription instead of API credits.
+- **A subscription-backed proxy:** if you'd rather front your ChatGPT login with a
+  third-party OpenAI-compatible proxy than use the built-in Codex backend above,
+  just point `OPENAI_BASE_URL` at that proxy (you run and maintain it).
 
-  Caveats: this needs the **Codex CLI installed and `codex login`'d**; the proxy
-  (not SmarTel) owns that integration and its upkeep. Codex is a coding agent, so
-  reply quality/latency can differ; **ChatGPT plan rate limits apply** (a busy bot
-  can hit caps); and **embeddings are usually unavailable** on such proxies — the
-  knowledge base then automatically falls back to keyword search. Automating a
-  personal subscription for a customer-facing service is a usage-policy gray area;
-  review OpenAI's terms before relying on it.
-
-`/status` shows the active backend (e.g. `OpenAI API` or `custom endpoint
-(localhost:1234)`).
+`/status` shows the active backend (e.g. `OpenAI API`, `ChatGPT via Codex`, or
+`custom endpoint (localhost:1234)`).
 
 ## 4. Run
 

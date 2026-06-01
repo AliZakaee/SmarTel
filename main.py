@@ -187,12 +187,24 @@ def main(argv: list[str]) -> int:
     handlers.init(bot, cfg)
     register_handlers(bot, cfg)
     set_bot_commands(bot)
+    _check_backend_ready(cfg)
 
     _notify_startup(bot, cfg, me)
     _print_banner(cfg, me)
 
     start_polling(bot)
     return 0
+
+
+def _check_backend_ready(cfg: config.Config) -> None:
+    if cfg.model_backend == "codex":
+        from services import codex_service
+        if not codex_service.is_available():
+            log.warning("MODEL_BACKEND=codex but the Codex CLI was not found on PATH. "
+                        "Install it (npm i -g @openai/codex) and run `codex login`.")
+        elif not codex_service.is_logged_in():
+            log.warning("Codex CLI found but not logged in — run `codex login` "
+                        "(Sign in with ChatGPT).")
 
 
 def _notify_startup(bot: telebot.TeleBot, cfg: config.Config, me: dict) -> None:
@@ -213,6 +225,7 @@ def _notify_startup(bot: telebot.TeleBot, cfg: config.Config, me: dict) -> None:
 
 
 def _print_banner(cfg: config.Config, me: dict) -> None:
+    from services import openai_service
     auto = database.get_bool("auto_reply_enabled")
     appr = database.get_bool("approval_mode_enabled")
     print("\n" + "=" * 60)
@@ -220,7 +233,8 @@ def _print_banner(cfg: config.Config, me: dict) -> None:
     print("=" * 60)
     print(f" Bot:          @{me['username']}")
     print(f" Owner ID:     {utils.mask_id(cfg.owner_user_id)}")
-    print(f" Model:        {database.get_str('openai_model')}")
+    print(f" AI backend:   {openai_service.backend_label()}")
+    print(f" Model:        {openai_service.active_model_label()}")
     print(f" Auto-reply:   {'ON' if auto else 'OFF'}")
     print(f" Approval:     {'ON' if appr else 'OFF'}")
     print(f" DB:           {cfg.db_path}")

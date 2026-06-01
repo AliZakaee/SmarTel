@@ -125,6 +125,12 @@ def _resolve_base_url() -> str | None:
     return (os.environ.get("OPENAI_BASE_URL") or "").strip() or None
 
 
+def _resolve_backend() -> str:
+    """'openai' (API key / custom endpoint) or 'codex' (ChatGPT subscription via
+    the Codex CLI)."""
+    return (os.environ.get("MODEL_BACKEND") or "openai").strip().lower() or "openai"
+
+
 def using_custom_endpoint() -> bool:
     return _resolve_base_url() is not None
 
@@ -134,12 +140,16 @@ def has_api_key() -> bool:
 
 
 def is_ready() -> bool:
-    """Whether the AI backend can be used: a key is set, OR a custom endpoint is
-    configured (which may not require a key)."""
+    """Whether the AI backend can be used."""
+    if _resolve_backend() == "codex":
+        from services import codex_service
+        return codex_service.is_available()
     return bool(_resolve_api_key()) or using_custom_endpoint()
 
 
 def backend_label() -> str:
+    if _resolve_backend() == "codex":
+        return "ChatGPT via Codex"
     base = _resolve_base_url()
     if not base:
         return "OpenAI API"
@@ -149,6 +159,12 @@ def backend_label() -> str:
     except Exception:
         host = base
     return f"custom endpoint ({host})"
+
+
+def active_model_label() -> str:
+    if _resolve_backend() == "codex":
+        return (os.environ.get("CODEX_MODEL") or "").strip() or "Codex default"
+    return database.get_str("openai_model")
 
 
 def masked_active_key() -> str:
@@ -243,6 +259,11 @@ def _map_error(e: Exception) -> OpenAIServiceError:
 # =============================================================================
 def chat(messages: list[dict], *, model: str | None = None,
          temperature: float | None = None, max_tokens: int | None = None) -> str:
+    # ChatGPT-subscription backend: delegate to the Codex CLI.
+    if _resolve_backend() == "codex":
+        from services import codex_service
+        return codex_service.chat(messages, model=model)
+
     client = get_client()
     model = model or database.get_str("openai_model")
     temperature = database.get_float("temperature") if temperature is None else temperature

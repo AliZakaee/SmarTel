@@ -62,6 +62,8 @@ class Config:
     owner_user_id: int
     openai_api_key: str
     openai_base_url: str
+    model_backend: str          # "openai" | "codex"
+    codex_model: str            # optional model override for the Codex backend
     fernet_key: str
     default_model: str
     default_auto_reply: bool
@@ -79,6 +81,8 @@ class Config:
             owner_user_id=_to_int(os.environ.get("OWNER_USER_ID")),
             openai_api_key=(os.environ.get("OPENAI_API_KEY") or "").strip(),
             openai_base_url=(os.environ.get("OPENAI_BASE_URL") or "").strip(),
+            model_backend=((os.environ.get("MODEL_BACKEND") or "openai").strip().lower() or "openai"),
+            codex_model=(os.environ.get("CODEX_MODEL") or "").strip(),
             fernet_key=(os.environ.get("SMARTEL_FERNET_KEY") or "").strip(),
             default_model=(os.environ.get("DEFAULT_MODEL") or "gpt-4.1-mini").strip(),
             default_auto_reply=_parse_bool(os.environ.get("DEFAULT_AUTO_REPLY"), False),
@@ -111,8 +115,10 @@ class Config:
         return (
             f"  Bot token:        {mask_token(self.bot_token)}\n"
             f"  Owner user ID:    {mask_id(self.owner_user_id)}\n"
+            f"  AI backend:       {self.model_backend}\n"
             f"  OpenAI key:       {mask_key(self.openai_api_key) if self.openai_api_key else '<not set>'}\n"
             f"  OpenAI base URL:  {self.openai_base_url or '<default OpenAI>'}\n"
+            f"  Codex model:      {self.codex_model or '<Codex default>'}\n"
             f"  Fernet key:       {'set' if self.fernet_key else '<not set>'}\n"
             f"  Default model:    {self.default_model}\n"
             f"  Auto-reply:       {self.default_auto_reply}\n"
@@ -147,6 +153,8 @@ def _env_values_from_config(cfg: Config) -> dict[str, str]:
         "OWNER_USER_ID": str(cfg.owner_user_id),
         "OPENAI_API_KEY": cfg.openai_api_key,
         "OPENAI_BASE_URL": cfg.openai_base_url,
+        "MODEL_BACKEND": cfg.model_backend,
+        "CODEX_MODEL": cfg.codex_model,
         "SMARTEL_FERNET_KEY": cfg.fernet_key,
         "DEFAULT_MODEL": cfg.default_model,
         "DEFAULT_AUTO_REPLY": "true" if cfg.default_auto_reply else "false",
@@ -237,6 +245,33 @@ def _validate_owner_id(value: str):
     return False, "Owner ID must be a positive number (from @userinfobot)."
 
 
+def _setup_codex_backend() -> None:
+    """Guide the owner through Codex CLI install/login for the ChatGPT-subscription
+    backend. Best-effort: never aborts the wizard if Codex isn't ready yet."""
+    from services import codex_service
+    if not codex_service.is_available():
+        print("\n   ! Codex CLI not found on PATH.")
+        print("     Install it with:  npm install -g @openai/codex")
+        print("                  or:  brew install --cask codex")
+        print("     You can install it later; the bot will warn until Codex is ready.")
+        if not _prompt_bool("   Continue configuring the Codex backend anyway?", default=True):
+            return
+    elif codex_service.is_logged_in():
+        print("   ✓ Codex CLI found and appears logged in.")
+        if not _prompt_bool("   Re-run `codex login` anyway?", default=False):
+            return
+    else:
+        print("   ✓ Codex CLI found (not logged in yet).")
+
+    if codex_service.is_available() and _prompt_bool(
+        "   Run `codex login` now (choose 'Sign in with ChatGPT')?", default=True
+    ):
+        device = _prompt_bool("   Use device-code login (for headless/remote machines)?", default=False)
+        ok = codex_service.login(device_auth=device)
+        print("   ✓ Codex login completed." if ok else
+              "   ! Codex login did not complete; run `codex login` manually later.")
+
+
 def _maybe_generate_fernet_key() -> str:
     """Generate a Fernet key if the cryptography lib is available (enables
     encrypted at-rest storage of the API key out of the box)."""
@@ -257,13 +292,37 @@ def run_wizard() -> Config:
                              secret=True, validator=_validate_token)
     owner_user_id = int(_prompt_text("2) Owner Telegram user ID (from @userinfobot)",
                                      validator=_validate_owner_id))
-    openai_api_key = _prompt_text("3) OpenAI API key (sk-...)", secret=True, required=False)
-    openai_base_url = _prompt_text(
-        "3b) Custom OpenAI-compatible base URL (optional, advanced; blank = OpenAI)",
-        required=False)
-    default_model = _prompt_text("4) Default OpenAI model", default="gpt-4.1-mini")
-    default_auto_reply = _prompt_bool("5) Enable automatic replies by default?", default=False)
-    default_approval_mode = _prompt_bool("6) Enable approval-before-send by default?", default=True)
+    # 3) AI backend selection
+    print("\n3) AI backend — how should the bot generate replies?")
+    print("     1) OpenAI API key (recommended)")
+    print("     2) Sign in with ChatGPT — use your subscription via the Codex CLI")
+    print("     3) Custom OpenAI-compatible endpoint (local model / proxy)")
+    backend_choice = input("   Select [1/2/3] (default 1): ").strip() or "1"
+
+    openai_api_key = ""
+    openai_base_url = ""
+    model_backend = "openai"
+    codex_model = ""
+    default_model = "gpt-4.1-mini"
+
+    if backend_choice == "2":
+        model_backend = "codex"
+        _setup_codex_backend()
+        codex_model = _prompt_text(
+            "   Codex model (optional; blank = Codex default, e.g. gpt-5.4)", required=False)
+        default_model = codex_model or default_model
+    elif backend_choice == "3":
+        openai_base_url = _prompt_text(
+            "   Custom OpenAI-compatible base URL (e.g. http://localhost:1234/v1)")
+        openai_api_key = _prompt_text(
+            "   API key for that endpoint (blank if none)", secret=True, required=False)
+        default_model = _prompt_text("   Default model name", default="gpt-4.1-mini")
+    else:
+        openai_api_key = _prompt_text("   OpenAI API key (sk-...)", secret=True, required=False)
+        default_model = _prompt_text("   Default OpenAI model", default="gpt-4.1-mini")
+
+    default_auto_reply = _prompt_bool("4) Enable automatic replies by default?", default=False)
+    default_approval_mode = _prompt_bool("5) Enable approval-before-send by default?", default=True)
 
     # Preserve an existing Fernet key if present, else generate one when possible.
     fernet_key = (os.environ.get("SMARTEL_FERNET_KEY") or "").strip() or _maybe_generate_fernet_key()
@@ -273,6 +332,8 @@ def run_wizard() -> Config:
         owner_user_id=owner_user_id,
         openai_api_key=openai_api_key,
         openai_base_url=openai_base_url,
+        model_backend=model_backend,
+        codex_model=codex_model,
         fernet_key=fernet_key,
         default_model=default_model,
         default_auto_reply=default_auto_reply,

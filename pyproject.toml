@@ -1,0 +1,32 @@
+# Tooling configuration for SmarTel.
+# This file holds only test + coverage configuration — the app itself is run as
+# scripts (python main.py) and is not packaged.
+
+[tool.pytest.ini_options]
+minversion = "7.0"
+testpaths = ["tests"]
+# The project uses flat, top-level imports (import database, from services import
+# kb_service). Put the repo root on sys.path so tests resolve them exactly as
+# production does.
+pythonpath = ["."]
+addopts = "-ra -q --strict-markers --strict-config"
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+[tool.coverage.run]
+branch = true
+omit = [
+    "tests/*",
+    "main.py",        # polling entrypoint; covered by manual/e2e, not unit tests
+    ".venv/*",
+]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = false
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]

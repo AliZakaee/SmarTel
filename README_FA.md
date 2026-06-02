@@ -83,7 +83,7 @@ SmarTel یک دستیار هوش مصنوعی از نوع **«ربات مدیر�
 <div dir="ltr">
 
 ```bash
-git clone <this repo> SmarTel && cd SmarTel
+git clone https://github.com/ITheEqualizer/SmarTel.git && cd SmarTel
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 ```

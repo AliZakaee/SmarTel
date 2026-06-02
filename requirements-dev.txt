@@ -1,0 +1,9 @@
+# Development / test dependencies. Installs the production deps too, so a single
+#   pip install -r requirements-dev.txt
+# gives a runnable, testable environment.
+-r requirements.txt
+
+pytest>=8.2,<9
+pytest-cov>=5.0,<6
+pytest-mock>=3.14,<4
+freezegun>=1.5,<2

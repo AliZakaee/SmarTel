@@ -378,6 +378,65 @@ Bootstrap secrets/identity live in `.env`; behavioral settings live in the
 
 ---
 
+## Automated tests & CI
+
+SmarTel ships a `pytest` unit-test suite (pure logic, the SQLite data layer,
+the service layer, and the Telegram handler pipeline) plus a GitHub Actions
+workflow that runs it on every push and pull request.
+
+### Run the tests locally
+
+```bash
+# One-time: install the test dependencies (also installs the runtime deps).
+pip install -r requirements-dev.txt
+
+# Run the whole suite (fast).
+pytest
+
+# Run a single module while iterating.
+pytest tests/unit/test_utils.py -q
+
+# Run with coverage, exactly like CI.
+pytest --cov=. --cov-report=term-missing --cov-report=html
+# then open htmlcov/index.html
+```
+
+Tests use a temporary SQLite database and mock all network/subprocess calls, so
+they never touch Telegram, OpenAI, Codex, or your real `.env`.
+
+### Continuous integration
+
+[`.github/workflows/tests.yml`](.github/workflows/tests.yml) runs the suite on a
+Python 3.10 / 3.11 / 3.12 matrix for every push to `main` and every pull
+request that targets `main`. Coverage is **measured and uploaded as an
+artifact** but is not a hard gate — a green suite is the gate.
+
+### Using it to protect merges
+
+After the workflow has run at least once (so the check is registered):
+
+1. Open **Settings → Branches → Add branch ruleset / protection rule** for `main`.
+2. Enable **Require status checks to pass before merging** and
+   **Require branches to be up to date before merging**.
+3. Select the status check named **`tests`** (the aggregate job).
+
+Now the PR merge button stays blocked until `tests` is green and the branch is
+up to date with `main`. After a merge, the `push` trigger re-runs `tests` on
+`main` as a post-merge guard.
+
+The same protection can be applied from the CLI (run it after the first CI run):
+
+```bash
+gh api -X PUT repos/ITheEqualizer/SmarTel/branches/main/protection \
+  -f required_status_checks.strict=true \
+  -f 'required_status_checks.contexts[]=tests' \
+  -f enforce_admins=true \
+  -f required_pull_request_reviews.required_approving_review_count=0 \
+  -f restrictions=
+```
+
+---
+
 ## Testing (end-to-end)
 
 1. `python main.py` and send `/start` to the bot as the owner.

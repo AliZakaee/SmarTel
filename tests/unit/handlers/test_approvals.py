@@ -94,6 +94,27 @@ def test_partial_send_is_not_made_retryable(db, stub_bot, make_call, mocker):
     stub_bot.edit_message_reply_markup.assert_called_once()
 
 
+def test_partial_send_still_warns_when_uncertain_state_write_fails(
+    db, stub_bot, make_call, mocker
+):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch(
+        "telegram_api.send_reply",
+        side_effect=TelegramPartialSendError(1, 2),
+    )
+    mocker.patch(
+        "database.mark_approval_delivery_uncertain",
+        side_effect=RuntimeError("db unavailable"),
+    )
+    answer = mocker.patch("telegram_api.answer_callback")
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert "Part of the reply" in answer.call_args.args[2]
+    stub_bot.edit_message_reply_markup.assert_called_once()
+
+
 def test_finalization_error_marks_delivery_uncertain(
     db, stub_bot, make_call, mocker
 ):

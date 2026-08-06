@@ -83,6 +83,20 @@ def test_mark_approval_is_atomic(db):
     aid = db.insert_pending_approval("bc1", 5, 22, "c", "r")
     assert db.mark_approval(aid, "sent") is True
     assert db.mark_approval(aid, "sent") is False  # double-tap loses
+
+
+def test_approval_delivery_claim_can_be_released_or_completed(db):
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+
+    assert db.claim_approval_delivery(aid) is True
+    assert db.claim_approval_delivery(aid) is False
+    assert db.get_approval(aid)["status"] == "sending"
+
+    assert db.release_approval_delivery(aid) is True
+    assert db.get_approval(aid)["status"] == "pending"
+
+    assert db.claim_approval_delivery(aid) is True
+    assert db.complete_approval_delivery(aid, "sent") is True
     assert db.get_approval(aid)["status"] == "sent"
 
 

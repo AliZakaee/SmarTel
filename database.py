@@ -622,6 +622,45 @@ def mark_approval(approval_id: int, status: str) -> bool:
         return cur.rowcount == 1
 
 
+def claim_approval_delivery(approval_id: int) -> bool:
+    """Atomically reserve a pending approval for delivery.
+
+    The transient ``sending`` state preserves double-tap protection without
+    claiming that Telegram accepted the message before the network call.
+    """
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='sending', decided_at=NULL "
+            "WHERE id=? AND status='pending'",
+            (approval_id,),
+        )
+        return cur.rowcount == 1
+
+
+def complete_approval_delivery(approval_id: int, status: str) -> bool:
+    """Finalize a claimed delivery after Telegram accepts the message."""
+    if status not in {"sent", "sent_edited"}:
+        raise ValueError(f"invalid delivery status: {status}")
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status=?, decided_at=? "
+            "WHERE id=? AND status='sending'",
+            (status, utils.now_iso(), approval_id),
+        )
+        return cur.rowcount == 1
+
+
+def release_approval_delivery(approval_id: int) -> bool:
+    """Return a failed delivery claim to pending so the owner can retry."""
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='pending', decided_at=NULL "
+            "WHERE id=? AND status='sending'",
+            (approval_id,),
+        )
+        return cur.rowcount == 1
+
+
 def update_approval_reply(approval_id: int, ai_reply_text: str) -> None:
     with write_tx() as cur:
         cur.execute(

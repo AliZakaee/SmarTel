@@ -94,6 +94,10 @@ def on_approval_callback(call) -> None:
     if appr is None:
         return telegram_api.answer_callback(bot, call.id, "Approval not found.", show_alert=True)
     if appr["status"] != "pending":
+        if appr["status"] == "sending":
+            return telegram_api.answer_callback(
+                bot, call.id, "Delivery is already in progress.", show_alert=True
+            )
         _strip_buttons(call)
         return telegram_api.answer_callback(bot, call.id, f"Already {appr['status']}.",
                                             show_alert=True)
@@ -116,10 +120,20 @@ def _do_send(call, appr) -> None:
     if conn is None or not (conn["is_enabled"] and conn["can_reply"]):
         return telegram_api.answer_callback(bot, call.id, "Connection unavailable / cannot reply.",
                                             show_alert=True)
-    if not database.mark_approval(appr["id"], "sent"):
+    outcome = _claim_and_send(conn, appr, appr["ai_reply_text"], "sent")
+    if outcome == "not_claimed":
+        return _answer_not_claimed(call, appr["id"])
+    if outcome == "delivery_failed":
+        return telegram_api.answer_callback(
+            bot, call.id, "Send failed; the approval is still pending. Please retry.",
+            show_alert=True,
+        )
+    if outcome == "state_failed":
         _strip_buttons(call)
-        return telegram_api.answer_callback(bot, call.id, "Already handled.", show_alert=True)
-    _send_to_customer(conn, appr, appr["ai_reply_text"])
+        return telegram_api.answer_callback(
+            bot, call.id, "Delivered, but the approval state could not be finalized.",
+            show_alert=True,
+        )
     _strip_buttons(call)
     telegram_api.answer_callback(bot, call.id, "Sent ✅")
 
@@ -172,22 +186,71 @@ def _apply_edit(message, context: dict) -> None:
     conn = business_service.get_connection(appr["business_connection_id"])
     if conn is None or not (conn["is_enabled"] and conn["can_reply"]):
         return handlers.notify_owner("Connection unavailable; the edited reply was not sent.")
-    database.update_approval_reply(aid, edited)
-    if not database.mark_approval(aid, "sent_edited"):
+    outcome = _claim_and_send(conn, appr, edited, "sent_edited", update_reply=True)
+    if outcome == "not_claimed":
         return handlers.notify_owner("That approval was already handled.")
-    _send_to_customer(conn, appr, edited)
+    if outcome == "delivery_failed":
+        return handlers.notify_owner(
+            "The edited reply could not be delivered. The approval is still pending; please retry."
+        )
+    if outcome == "state_failed":
+        return handlers.notify_owner(
+            "The edited reply was delivered, but its approval state could not be finalized."
+        )
     handlers.notify_owner("Edited reply sent ✅")
 
 
-def _send_to_customer(conn, appr, reply_text: str) -> None:
+def _claim_and_send(conn, appr, reply_text: str, final_status: str,
+                    *, update_reply: bool = False) -> str:
+    """Claim, deliver, and finalize an approval without false sent states."""
+    aid = appr["id"]
+    if not database.claim_approval_delivery(aid):
+        return "not_claimed"
+
+    if update_reply:
+        try:
+            database.update_approval_reply(aid, reply_text)
+        except Exception:
+            database.release_approval_delivery(aid)
+            raise
+
     bcid = conn["business_connection_id"]
     chat_id = appr["customer_chat_id"]
-    telegram_api.send_reply(handlers.bot, chat_id, reply_text,
-                            business_connection_id=bcid,
-                            reply_to_message_id=appr["customer_message_id"])
-    database.insert_message(bcid, chat_id, None, "out", "assistant", reply_text)
-    memory_service.append_exchange(bcid, chat_id, appr["customer_message_text"], reply_text)
-    log.info("approval %s delivered to chat=%s", appr["id"], utils.mask_id(chat_id))
+    try:
+        telegram_api.send_reply(handlers.bot, chat_id, reply_text,
+                                business_connection_id=bcid,
+                                reply_to_message_id=appr["customer_message_id"])
+    except Exception as exc:
+        released = database.release_approval_delivery(aid)
+        log.warning(
+            "approval %s delivery failed (%s); released=%s",
+            aid, type(exc).__name__, released,
+        )
+        return "delivery_failed"
+
+    if not database.complete_approval_delivery(aid, final_status):
+        log.error("approval %s delivered but state finalization failed", aid)
+        return "state_failed"
+
+    try:
+        database.insert_message(bcid, chat_id, None, "out", "assistant", reply_text)
+        memory_service.append_exchange(
+            bcid, chat_id, appr["customer_message_text"], reply_text
+        )
+    except Exception:
+        log.exception("approval %s delivered but local bookkeeping failed", aid)
+    log.info("approval %s delivered to chat=%s", aid, utils.mask_id(chat_id))
+    return "sent"
+
+
+def _answer_not_claimed(call, approval_id: int) -> None:
+    current = database.get_approval(approval_id)
+    if current is not None and current["status"] == "sending":
+        return telegram_api.answer_callback(
+            handlers.bot, call.id, "Delivery is already in progress.", show_alert=True
+        )
+    _strip_buttons(call)
+    telegram_api.answer_callback(handlers.bot, call.id, "Already handled.", show_alert=True)
 
 
 def _strip_buttons(call) -> None:

@@ -37,6 +37,17 @@ class TelegramAPIError(Exception):
         self.error_code = error_code
 
 
+class TelegramPartialSendError(TelegramAPIError):
+    """Raised when a chunked message fails after at least one chunk was sent."""
+
+    def __init__(self, sent_count: int, total_count: int):
+        super().__init__(
+            f"partial Telegram delivery ({sent_count} of {total_count} chunks sent)"
+        )
+        self.sent_count = sent_count
+        self.total_count = total_count
+
+
 def init(token: str) -> None:
     global _TOKEN, _API_BASE, _FILE_BASE
     _TOKEN = token
@@ -164,7 +175,16 @@ def send_reply(bot, chat_id, text, *, business_connection_id=None,
     for i, chunk in enumerate(chunks):
         rtm = reply_to_message_id if i == 0 else None
         markup = reply_markup if i == 0 else None
-        sent.append(_send_one(bot, chat_id, chunk, business_connection_id, rtm, markup, parse_mode))
+        try:
+            sent.append(
+                _send_one(
+                    bot, chat_id, chunk, business_connection_id, rtm, markup, parse_mode
+                )
+            )
+        except Exception as exc:
+            if sent:
+                raise TelegramPartialSendError(len(sent), len(chunks)) from exc
+            raise
     return sent
 
 

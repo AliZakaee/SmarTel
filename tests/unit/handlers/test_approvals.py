@@ -3,7 +3,7 @@ the restart-safe edit flow."""
 
 from __future__ import annotations
 
-from telegram_api import TelegramAPIError
+from telegram_api import TelegramAPIError, TelegramPartialSendError
 
 from handlers import approvals
 
@@ -78,6 +78,52 @@ def test_send_success_finalizes_after_delivery(db, stub_bot, make_call, mocker):
     assert answer.call_args.args[2] == "Sent ✅"
 
 
+def test_partial_send_is_not_made_retryable(db, stub_bot, make_call, mocker):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch(
+        "telegram_api.send_reply",
+        side_effect=TelegramPartialSendError(1, 2),
+    )
+    answer = mocker.patch("telegram_api.answer_callback")
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert db.get_approval(aid)["status"] == "delivery_uncertain"
+    assert "Part of the reply" in answer.call_args.args[2]
+    stub_bot.edit_message_reply_markup.assert_called_once()
+
+
+def test_finalization_error_marks_delivery_uncertain(
+    db, stub_bot, make_call, mocker
+):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch("telegram_api.send_reply")
+    mocker.patch(
+        "database.complete_approval_delivery", side_effect=RuntimeError("db unavailable")
+    )
+    answer = mocker.patch("telegram_api.answer_callback")
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert db.get_approval(aid)["status"] == "delivery_uncertain"
+    assert "state could not be finalized" in answer.call_args.args[2]
+
+
+def test_lost_finalization_claim_marks_delivery_uncertain(
+    db, stub_bot, make_call, mocker
+):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch("telegram_api.send_reply")
+    mocker.patch("database.complete_approval_delivery", return_value=False)
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert db.get_approval(aid)["status"] == "delivery_uncertain"
+
+
 def test_callback_while_sending_keeps_retry_buttons(db, stub_bot, make_call, mocker):
     aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
     assert db.claim_approval_delivery(aid) is True
@@ -87,6 +133,22 @@ def test_callback_while_sending_keeps_retry_buttons(db, stub_bot, make_call, moc
 
     assert "in progress" in answer.call_args.args[2]
     stub_bot.edit_message_reply_markup.assert_not_called()
+
+
+def test_callback_for_uncertain_delivery_removes_retry_buttons(
+    db, stub_bot, make_call, mocker
+):
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    assert db.claim_approval_delivery(aid) is True
+    assert db.mark_approval_delivery_uncertain(aid) is True
+    answer = mocker.patch("telegram_api.answer_callback")
+    send = mocker.patch("telegram_api.send_reply")
+
+    approvals.on_approval_callback(make_call(data=f"apr:send:{aid}"))
+
+    assert "outcome is uncertain" in answer.call_args.args[2]
+    send.assert_not_called()
+    stub_bot.edit_message_reply_markup.assert_called_once()
 
 
 # --- edit flow ---------------------------------------------------------------

@@ -98,6 +98,14 @@ def on_approval_callback(call) -> None:
             return telegram_api.answer_callback(
                 bot, call.id, "Delivery is already in progress.", show_alert=True
             )
+        if appr["status"] == "delivery_uncertain":
+            _strip_buttons(call)
+            return telegram_api.answer_callback(
+                bot,
+                call.id,
+                "Delivery outcome is uncertain. Check the customer chat before replying again.",
+                show_alert=True,
+            )
         _strip_buttons(call)
         return telegram_api.answer_callback(bot, call.id, f"Already {appr['status']}.",
                                             show_alert=True)
@@ -126,6 +134,14 @@ def _do_send(call, appr) -> None:
     if outcome == "delivery_failed":
         return telegram_api.answer_callback(
             bot, call.id, "Send failed; the approval is still pending. Please retry.",
+            show_alert=True,
+        )
+    if outcome == "partial_delivery":
+        _strip_buttons(call)
+        return telegram_api.answer_callback(
+            bot,
+            call.id,
+            "Part of the reply was delivered. Check the customer chat before sending more.",
             show_alert=True,
         )
     if outcome == "state_failed":
@@ -193,6 +209,10 @@ def _apply_edit(message, context: dict) -> None:
         return handlers.notify_owner(
             "The edited reply could not be delivered. The approval is still pending; please retry."
         )
+    if outcome == "partial_delivery":
+        return handlers.notify_owner(
+            "Part of the edited reply was delivered. Check the customer chat before sending more."
+        )
     if outcome == "state_failed":
         return handlers.notify_owner(
             "The edited reply was delivered, but its approval state could not be finalized."
@@ -220,6 +240,13 @@ def _claim_and_send(conn, appr, reply_text: str, final_status: str,
         telegram_api.send_reply(handlers.bot, chat_id, reply_text,
                                 business_connection_id=bcid,
                                 reply_to_message_id=appr["customer_message_id"])
+    except telegram_api.TelegramPartialSendError as exc:
+        uncertain = _mark_delivery_uncertain(aid)
+        log.error(
+            "approval %s partially delivered (%s/%s chunks); marked_uncertain=%s",
+            aid, exc.sent_count, exc.total_count, uncertain,
+        )
+        return "partial_delivery"
     except Exception as exc:
         released = database.release_approval_delivery(aid)
         log.warning(
@@ -228,8 +255,15 @@ def _claim_and_send(conn, appr, reply_text: str, final_status: str,
         )
         return "delivery_failed"
 
-    if not database.complete_approval_delivery(aid, final_status):
-        log.error("approval %s delivered but state finalization failed", aid)
+    try:
+        finalized = database.complete_approval_delivery(aid, final_status)
+    except Exception:
+        log.exception("approval %s delivered but state finalization raised", aid)
+        _mark_delivery_uncertain(aid)
+        return "state_failed"
+    if not finalized:
+        log.error("approval %s delivered but state finalization lost its claim", aid)
+        _mark_delivery_uncertain(aid)
         return "state_failed"
 
     try:
@@ -241,6 +275,14 @@ def _claim_and_send(conn, appr, reply_text: str, final_status: str,
         log.exception("approval %s delivered but local bookkeeping failed", aid)
     log.info("approval %s delivered to chat=%s", aid, utils.mask_id(chat_id))
     return "sent"
+
+
+def _mark_delivery_uncertain(approval_id: int) -> bool:
+    try:
+        return database.mark_approval_delivery_uncertain(approval_id)
+    except Exception:
+        log.exception("approval %s could not be marked delivery-uncertain", approval_id)
+        return False
 
 
 def _answer_not_claimed(call, approval_id: int) -> None:

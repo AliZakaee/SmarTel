@@ -162,6 +162,40 @@ def test_deliver_auto_records_outbound(db, stub_bot, make_message, mocker):
     assert _out_count(db) == 1
 
 
+def test_deliver_auto_warns_on_partial_delivery(db, stub_bot, make_message, mocker):
+    mocker.patch(
+        "telegram_api.send_reply",
+        side_effect=bu.telegram_api.TelegramPartialSendError(1, 2),
+    )
+    notify = mocker.patch("handlers.notify_owner")
+    db.upsert_business_connection("bc1", 999, True, True)
+    conn = db.get_business_connection("bc1")
+
+    bu._deliver_auto(conn, make_message(chat_id=5), "ctext", "reply text")
+
+    assert "partially delivered (1/2 parts)" in notify.call_args.args[0]
+    assert _out_count(db) == 0
+    assert db.get_recent_memory("bc1", 5, 10) == []
+
+
+def test_deliver_auto_warns_when_delivery_is_unconfirmed(
+    db, stub_bot, make_message, mocker
+):
+    mocker.patch(
+        "telegram_api.send_reply",
+        side_effect=bu.telegram_api.TelegramAPIError("unavailable"),
+    )
+    notify = mocker.patch("handlers.notify_owner")
+    db.upsert_business_connection("bc1", 999, True, True)
+    conn = db.get_business_connection("bc1")
+
+    bu._deliver_auto(conn, make_message(chat_id=5), "ctext", "reply text")
+
+    assert "could not be confirmed" in notify.call_args.args[0]
+    assert _out_count(db) == 0
+    assert db.get_recent_memory("bc1", 5, 10) == []
+
+
 # --- deleted messages --------------------------------------------------------
 def test_deleted_invalidates_approval(penv):
     aid = penv.db.insert_pending_approval("bc1", 5, 22, "c", "r")

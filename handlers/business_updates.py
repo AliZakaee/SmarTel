@@ -207,9 +207,41 @@ def _deliver_auto(conn, message, customer_text: str, reply_text: str) -> None:
             "reply permission. Check Telegram Business → Chatbots."
         )
         return
-    telegram_api.send_reply(handlers.bot, customer_chat_id, reply_text,
-                            business_connection_id=bcid,
-                            reply_to_message_id=message.message_id)
+    try:
+        telegram_api.send_reply(
+            handlers.bot,
+            customer_chat_id,
+            reply_text,
+            business_connection_id=bcid,
+            reply_to_message_id=message.message_id,
+        )
+    except telegram_api.TelegramPartialSendError as exc:
+        log.error(
+            "auto-reply partially delivered chat=%s chunks=%d/%d",
+            utils.mask_id(customer_chat_id),
+            exc.sent_count,
+            exc.total_count,
+        )
+        name = business_service.customer_display_name(bcid, customer_chat_id)
+        handlers.notify_owner(
+            f"⚠️ An automatic reply to <b>{utils.escape(name)}</b> was only "
+            f"partially delivered ({exc.sent_count}/{exc.total_count} parts). "
+            "Check the customer chat before sending anything else."
+        )
+        return
+    except Exception as exc:
+        log.warning(
+            "auto-reply delivery unconfirmed chat=%s error=%s",
+            utils.mask_id(customer_chat_id),
+            type(exc).__name__,
+        )
+        name = business_service.customer_display_name(bcid, customer_chat_id)
+        handlers.notify_owner(
+            f"⚠️ Delivery of an automatic reply to <b>{utils.escape(name)}</b> "
+            "could not be confirmed. No outbound history was recorded; check "
+            "the customer chat before retrying."
+        )
+        return
     database.insert_message(bcid, customer_chat_id, None, "out", "assistant", reply_text)
     memory_service.append_exchange(bcid, customer_chat_id, customer_text, reply_text)
     log.info("auto-replied chat=%s len=%d", utils.mask_id(customer_chat_id), len(reply_text))

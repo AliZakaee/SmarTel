@@ -248,12 +248,15 @@ def _claim_and_send(conn, appr, reply_text: str, final_status: str,
         )
         return "partial_delivery"
     except Exception as exc:
-        released = database.release_approval_delivery(aid)
+        released = _release_delivery_claim(aid)
         log.warning(
             "approval %s delivery failed (%s); released=%s",
             aid, type(exc).__name__, released,
         )
-        return "delivery_failed"
+        if released:
+            return "delivery_failed"
+        _mark_delivery_uncertain(aid)
+        return "state_failed"
 
     try:
         finalized = database.complete_approval_delivery(aid, final_status)
@@ -282,6 +285,14 @@ def _mark_delivery_uncertain(approval_id: int) -> bool:
         return database.mark_approval_delivery_uncertain(approval_id)
     except Exception:
         log.exception("approval %s could not be marked delivery-uncertain", approval_id)
+        return False
+
+
+def _release_delivery_claim(approval_id: int) -> bool:
+    try:
+        return database.release_approval_delivery(approval_id)
+    except Exception:
+        log.exception("approval %s delivery claim could not be released", approval_id)
         return False
 
 

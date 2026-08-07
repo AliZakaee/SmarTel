@@ -65,6 +65,40 @@ def test_send_failure_keeps_approval_pending(db, stub_bot, make_call, mocker):
     stub_bot.edit_message_reply_markup.assert_not_called()
 
 
+def test_send_failure_with_lost_release_claim_is_not_reported_retryable(
+    db, stub_bot, make_call, mocker
+):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch("telegram_api.send_reply", side_effect=TelegramAPIError("unavailable"))
+    mocker.patch("database.release_approval_delivery", return_value=False)
+    answer = mocker.patch("telegram_api.answer_callback")
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert db.get_approval(aid)["status"] == "delivery_uncertain"
+    assert "state could not be finalized" in answer.call_args.args[2]
+    stub_bot.edit_message_reply_markup.assert_called_once()
+
+
+def test_send_failure_with_release_error_is_not_reported_retryable(
+    db, stub_bot, make_call, mocker
+):
+    db.upsert_business_connection("bc1", 999, True, True)
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    mocker.patch("telegram_api.send_reply", side_effect=TelegramAPIError("unavailable"))
+    mocker.patch(
+        "database.release_approval_delivery", side_effect=RuntimeError("db unavailable")
+    )
+    answer = mocker.patch("telegram_api.answer_callback")
+
+    approvals._do_send(make_call(data=f"apr:send:{aid}"), db.get_approval(aid))
+
+    assert db.get_approval(aid)["status"] == "delivery_uncertain"
+    assert "state could not be finalized" in answer.call_args.args[2]
+    stub_bot.edit_message_reply_markup.assert_called_once()
+
+
 def test_send_success_finalizes_after_delivery(db, stub_bot, make_call, mocker):
     db.upsert_business_connection("bc1", 999, True, True)
     aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")

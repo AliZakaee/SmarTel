@@ -59,8 +59,12 @@ _BOOL_FALSE = {"0", "false", "no", "off", ""}
 # =============================================================================
 # Connection management
 # =============================================================================
-def init_db(cfg) -> None:
-    """Initialise the database: create dirs, schema, indexes, seed settings."""
+def init_db(cfg) -> int:
+    """Initialise storage and quarantine delivery claims from an earlier process.
+
+    Returns the number of interrupted approval deliveries that require manual
+    review.
+    """
     global _DB_PATH, _SEED_DEFAULTS
     _DB_PATH = Path(cfg.db_path)
     _DB_PATH.parent.mkdir(parents=True, exist_ok=True)
@@ -75,7 +79,9 @@ def init_db(cfg) -> None:
 
     _create_schema()
     seed_default_settings()
+    interrupted_deliveries = mark_interrupted_approval_deliveries_uncertain()
     log.info("database initialised at %s", _DB_PATH)
+    return interrupted_deliveries
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -620,6 +626,73 @@ def mark_approval(approval_id: int, status: str) -> bool:
             (status, utils.now_iso(), approval_id),
         )
         return cur.rowcount == 1
+
+
+def claim_approval_delivery(approval_id: int) -> bool:
+    """Atomically reserve a pending approval for delivery.
+
+    The transient ``sending`` state preserves double-tap protection without
+    claiming that Telegram accepted the message before the network call. The
+    timestamp lets an interrupted process leave an auditable claim behind.
+    """
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='sending', decided_at=? "
+            "WHERE id=? AND status='pending'",
+            (utils.now_iso(), approval_id),
+        )
+        return cur.rowcount == 1
+
+
+def complete_approval_delivery(approval_id: int, status: str) -> bool:
+    """Finalize a claimed delivery after Telegram accepts the message."""
+    if status not in {"sent", "sent_edited"}:
+        raise ValueError(f"invalid delivery status: {status}")
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status=?, decided_at=? "
+            "WHERE id=? AND status='sending'",
+            (status, utils.now_iso(), approval_id),
+        )
+        return cur.rowcount == 1
+
+
+def release_approval_delivery(approval_id: int) -> bool:
+    """Return a failed delivery claim to pending so the owner can retry."""
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='pending', decided_at=NULL "
+            "WHERE id=? AND status='sending'",
+            (approval_id,),
+        )
+        return cur.rowcount == 1
+
+
+def mark_approval_delivery_uncertain(approval_id: int) -> bool:
+    """Stop retries when Telegram may have accepted some or all content."""
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='delivery_uncertain', decided_at=? "
+            "WHERE id=? AND status='sending'",
+            (utils.now_iso(), approval_id),
+        )
+        return cur.rowcount == 1
+
+
+def mark_interrupted_approval_deliveries_uncertain() -> int:
+    """Recover claims left by a previous process without risking duplicates.
+
+    A process restart makes every remaining ``sending`` row ambiguous: Telegram
+    may have accepted the message immediately before the process stopped. Mark
+    those rows for manual review instead of automatically retrying them.
+    """
+    with write_tx() as cur:
+        cur.execute(
+            "UPDATE pending_approvals SET status='delivery_uncertain', decided_at=? "
+            "WHERE status='sending'",
+            (utils.now_iso(),),
+        )
+        return cur.rowcount
 
 
 def update_approval_reply(approval_id: int, ai_reply_text: str) -> None:

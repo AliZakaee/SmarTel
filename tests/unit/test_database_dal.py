@@ -83,7 +83,39 @@ def test_mark_approval_is_atomic(db):
     aid = db.insert_pending_approval("bc1", 5, 22, "c", "r")
     assert db.mark_approval(aid, "sent") is True
     assert db.mark_approval(aid, "sent") is False  # double-tap loses
+
+
+def test_approval_delivery_claim_can_be_released_or_completed(db):
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+
+    assert db.claim_approval_delivery(aid) is True
+    assert db.claim_approval_delivery(aid) is False
+    assert db.get_approval(aid)["status"] == "sending"
+    assert db.get_approval(aid)["decided_at"] is not None
+
+    assert db.release_approval_delivery(aid) is True
+    assert db.get_approval(aid)["status"] == "pending"
+
+    assert db.claim_approval_delivery(aid) is True
+    assert db.complete_approval_delivery(aid, "sent") is True
     assert db.get_approval(aid)["status"] == "sent"
+
+
+def test_reinitialization_quarantines_interrupted_delivery_claim(
+    db, fake_config
+):
+    aid = db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    assert db.claim_approval_delivery(aid) is True
+
+    conn = db._local.conn
+    conn.close()
+    del db._local.conn
+
+    assert db.init_db(fake_config) == 1
+    approval = db.get_approval(aid)
+    assert approval["status"] == "delivery_uncertain"
+    assert approval["decided_at"] is not None
+    assert db.init_db(fake_config) == 0
 
 
 def test_find_open_approval_matches_message_id(db):

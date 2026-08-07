@@ -56,6 +56,20 @@ def test_send_reply_falls_back_to_raw(monkeypatch):
     assert tg.send_reply(bot, 5, "hello") == [{"ok": True}]
 
 
+def test_send_reply_reports_partial_chunk_delivery(monkeypatch):
+    send_one = MagicMock(
+        side_effect=[{"message_id": 1}, tg.TelegramAPIError("second chunk failed")]
+    )
+    monkeypatch.setattr(tg, "_send_one", send_one)
+
+    with pytest.raises(tg.TelegramPartialSendError) as exc_info:
+        tg.send_reply(MagicMock(), 5, "x" * 9000)
+
+    assert exc_info.value.sent_count == 1
+    assert exc_info.value.total_count == 3
+    assert send_one.call_count == 2
+
+
 # --- chat_action / answer_callback ------------------------------------------
 def test_chat_action_uses_bot():
     bot = MagicMock()

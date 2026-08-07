@@ -168,7 +168,12 @@ def main(argv: list[str]) -> int:
     log.info("Starting SmarTel (token %s, owner %s)",
              utils.mask_token(cfg.bot_token), utils.mask_id(cfg.owner_user_id))
 
-    database.init_db(cfg)
+    interrupted_deliveries = database.init_db(cfg)
+    if interrupted_deliveries:
+        log.warning(
+            "%s interrupted approval delivery claim(s) require manual review",
+            interrupted_deliveries,
+        )
     file_service.init(cfg.uploads_dir)
     telegram_api.init(cfg.bot_token)
 
@@ -190,7 +195,7 @@ def main(argv: list[str]) -> int:
     set_bot_commands(bot)
     _check_backend_ready(cfg)
 
-    _notify_startup(bot, cfg, me)
+    _notify_startup(bot, cfg, me, interrupted_deliveries)
     _print_banner(cfg, me)
 
     start_polling(bot)
@@ -208,7 +213,12 @@ def _check_backend_ready(cfg: config.Config) -> None:
                         "(Sign in with ChatGPT).")
 
 
-def _notify_startup(bot: telebot.TeleBot, cfg: config.Config, me: dict) -> None:
+def _notify_startup(
+    bot: telebot.TeleBot,
+    cfg: config.Config,
+    me: dict,
+    interrupted_deliveries: int = 0,
+) -> None:
     try:
         from services import openai_service
         text = (
@@ -219,6 +229,12 @@ def _notify_startup(bot: telebot.TeleBot, cfg: config.Config, me: dict) -> None:
             f"({utils.escape(openai_service.backend_label())})\n\n"
             "Connect me in <b>Telegram → Settings → Business → Chatbots</b>, then /start."
         )
+        if interrupted_deliveries:
+            text += (
+                "\n\n⚠️ <b>Manual review required:</b> "
+                f"{interrupted_deliveries} approval delivery attempt(s) were interrupted. "
+                "Check the customer chat before sending another reply."
+            )
         bot.send_message(cfg.owner_user_id, text, parse_mode="HTML")
     except Exception:
         log.warning("Could not message the owner at startup "

@@ -570,7 +570,8 @@ def delete_pause(business_connection_id: str, customer_chat_id: int) -> int:
 def list_active_pauses() -> list[sqlite3.Row]:
     with read_cursor() as cur:
         cur.execute("SELECT * FROM paused_chats ORDER BY id")
-        return cur.fetchall()
+        rows = cur.fetchall()
+    return [row for row in rows if not utils.is_expired(row["paused_until"])]
 
 
 def clear_all_pauses() -> int:

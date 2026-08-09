@@ -78,6 +78,18 @@ def test_pauses_dal(db):
     assert db.delete_pause("bc1", 5) == 0
 
 
+def test_list_active_pauses_excludes_expired_deadlines(db):
+    with freeze_time("2024-01-01 12:00:00"):
+        db.upsert_pause("bc1", 5, "rate_limit", utils.future_iso(30))
+        db.upsert_pause("bc1", 6, "manual", None)
+
+    with freeze_time("2024-01-01 13:00:00"):
+        active_chat_ids = [row["customer_chat_id"] for row in db.list_active_pauses()]
+
+    assert active_chat_ids == [6]
+    assert db.get_pause("bc1", 5) is not None  # enforcement still owns lazy cleanup
+
+
 # --- pending_approvals -------------------------------------------------------
 def test_mark_approval_is_atomic(db):
     aid = db.insert_pending_approval("bc1", 5, 22, "c", "r")

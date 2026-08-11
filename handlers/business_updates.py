@@ -268,8 +268,6 @@ def _notify_incoming(bcid: str, customer_chat_id: int, text: str) -> None:
 # =============================================================================
 def on_edited_business_message(message) -> None:
     # Informational only: do NOT generate a new reply (prevents edit loops).
-    if not database.get_bool("monitoring_mode"):
-        return
     bcid = getattr(message, "business_connection_id", None)
     if not bcid:
         return
@@ -278,11 +276,24 @@ def on_edited_business_message(message) -> None:
     sender = getattr(message, "from_user", None)
     if sender and owner_user_id and sender.id == owner_user_id:
         return  # owner edited their own message
+    invalidated = database.invalidate_approvals_for_messages(
+        bcid, message.chat.id, [message.message_id]
+    )
+    log.info(
+        "customer edited message chat=%s (invalidated %d approvals)",
+        utils.mask_id(message.chat.id), invalidated,
+    )
+    if not database.get_bool("monitoring_mode"):
+        return
     name = business_service.customer_display_name(bcid, message.chat.id)
     text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+    cancellation = (
+        "\nThe pending approval for the earlier version was cancelled."
+        if invalidated else ""
+    )
     handlers.notify_owner(
         f"✏️ <b>{utils.escape(name)}</b> edited a message: "
-        f"<i>{utils.escape(text[:300])}</i>"
+        f"<i>{utils.escape(text[:300])}</i>{cancellation}"
     )
 
 

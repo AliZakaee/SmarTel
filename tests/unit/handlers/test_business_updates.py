@@ -196,7 +196,55 @@ def test_deliver_auto_warns_when_delivery_is_unconfirmed(
     assert db.get_recent_memory("bc1", 5, 10) == []
 
 
-# --- deleted messages --------------------------------------------------------
+# --- edited / deleted messages ----------------------------------------------
+def test_edited_customer_message_invalidates_approval(penv, make_message, mocker):
+    aid = penv.db.insert_pending_approval("bc1", 5, 22, "before", "reply")
+    notify = mocker.patch("handlers.notify_owner")
+
+    bu.on_edited_business_message(
+        make_message(
+            business_connection_id="bc1", chat_id=5, message_id=22, text="after"
+        )
+    )
+
+    assert penv.db.get_approval(aid)["status"] == "invalidated"
+    assert "pending approval for the earlier version was cancelled" in notify.call_args.args[0]
+
+
+def test_edited_customer_message_invalidates_with_monitoring_off(
+    penv, make_message, mocker
+):
+    penv.db.set_setting("monitoring_mode", False)
+    aid = penv.db.insert_pending_approval("bc1", 5, 22, "before", "reply")
+    notify = mocker.patch("handlers.notify_owner")
+
+    bu.on_edited_business_message(
+        make_message(
+            business_connection_id="bc1", chat_id=5, message_id=22, text="after"
+        )
+    )
+
+    assert penv.db.get_approval(aid)["status"] == "invalidated"
+    notify.assert_not_called()
+
+
+def test_edited_owner_message_does_not_invalidate_customer_approval(
+    penv, make_message, mocker
+):
+    aid = penv.db.insert_pending_approval("bc1", 5, 22, "customer", "reply")
+    notify = mocker.patch("handlers.notify_owner")
+
+    bu.on_edited_business_message(
+        make_message(
+            business_connection_id="bc1", user_id=999, chat_id=5,
+            message_id=22, text="owner edit",
+        )
+    )
+
+    assert penv.db.get_approval(aid)["status"] == "pending"
+    notify.assert_not_called()
+
+
 def test_deleted_invalidates_approval(penv):
     aid = penv.db.insert_pending_approval("bc1", 5, 22, "c", "r")
     deleted = SimpleNamespace(business_connection_id="bc1",

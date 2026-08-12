@@ -56,7 +56,8 @@ def _chunk_text(text: str) -> list[str]:
             current = f"{current}\n{piece}"
         else:
             chunks.append(current)
-            tail = current[-CHUNK_OVERLAP:] if CHUNK_OVERLAP else ""
+            overlap = min(CHUNK_OVERLAP, max(0, CHUNK_SIZE - len(piece) - 1))
+            tail = current[-overlap:] if overlap else ""
             current = (tail + "\n" + piece).strip() if tail else piece
     if current:
         chunks.append(current)
@@ -69,6 +70,8 @@ def _split_long(text: str) -> list[str]:
     current = ""
     for s in sentences:
         if len(s) > CHUNK_SIZE:
+            if current:
+                out.append(current)
             # Hard-split an oversized sentence on word boundaries.
             for i in range(0, len(s), CHUNK_SIZE):
                 out.append(s[i : i + CHUNK_SIZE])

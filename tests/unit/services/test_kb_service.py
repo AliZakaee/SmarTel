@@ -38,6 +38,21 @@ def test_split_long_hard_splits_oversized_sentence():
     assert "".join(pieces) == "X" * 1000
 
 
+def test_split_long_preserves_buffer_before_oversized_sentence():
+    prefix = "Warranty lasts two years."
+    oversized = "X" * (kb.CHUNK_SIZE + 25)
+    text = f"{prefix} {oversized}"
+
+    pieces = kb._split_long(text)
+    chunks = kb._chunk_text(text)
+
+    assert pieces[0] == prefix
+    assert "".join(pieces[1:]) == oversized
+    assert all(len(piece) <= kb.CHUNK_SIZE for piece in pieces)
+    assert any(prefix in chunk for chunk in chunks)
+    assert all(len(chunk) <= kb.CHUNK_SIZE for chunk in chunks)
+
+
 # --- build_context_block -----------------------------------------------------
 def test_context_block_empty():
     assert kb.build_context_block([]) == ""

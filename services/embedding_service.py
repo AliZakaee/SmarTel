@@ -53,15 +53,20 @@ def _load_matrix(chunks):
             continue
         try:
             vec = json.loads(raw)
-        except (json.JSONDecodeError, TypeError):
+            if not isinstance(vec, list) or len(vec) != EMBED_DIM:
+                continue
+            array = np.asarray(vec, dtype=np.float64)
+        except (json.JSONDecodeError, TypeError, ValueError, OverflowError):
             continue
-        if not isinstance(vec, list) or len(vec) != EMBED_DIM:
+        if array.shape != (EMBED_DIM,) or not np.all(np.isfinite(array)):
             continue
-        vectors.append(vec)
+        if np.any(np.abs(array) > np.finfo(np.float32).max):
+            continue
+        vectors.append(array.astype(np.float32))
         kept.append(ch)
     if not vectors:
         return None, []
-    return np.asarray(vectors, dtype=np.float32), kept
+    return np.vstack(vectors), kept
 
 
 def search_chunks(query: str, chunks, top_k: int = KB_TOP_K) -> list[tuple]:

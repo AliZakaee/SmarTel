@@ -70,14 +70,22 @@ def test_load_matrix_filters_bad_rows(monkeypatch):
         {"content": "missing", "embedding_json": None},
         {"content": "malformed", "embedding_json": "{not json"},
         {"content": "wrong dim", "embedding_json": json.dumps([1.0, 2.0])},
+        {"content": "non-numeric", "embedding_json": json.dumps(["bad", 0.0, 0.0])},
+        {"content": "nested", "embedding_json": json.dumps([[1.0], [0.0], [0.0]])},
+        {"content": "non-finite", "embedding_json": json.dumps([float("nan"), 0.0, 0.0])},
+        {"content": "float32 overflow", "embedding_json": json.dumps([1e40, 0.0, 0.0])},
     ]
     matrix, kept = es._load_matrix(chunks)
     assert matrix.shape == (1, 3)
     assert [c["content"] for c in kept] == ["good"]
 
 
-def test_load_matrix_none_when_no_usable():
-    matrix, kept = es._load_matrix([{"content": "x", "embedding_json": None}])
+def test_load_matrix_none_when_no_usable(monkeypatch):
+    monkeypatch.setattr(es, "EMBED_DIM", 3)
+    matrix, kept = es._load_matrix([
+        {"content": "missing", "embedding_json": None},
+        {"content": "non-numeric", "embedding_json": json.dumps(["bad", 0.0, 0.0])},
+    ])
     assert matrix is None and kept == []
 
 
